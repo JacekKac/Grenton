@@ -1,1 +1,121 @@
+let CONFIG = {
+  switchId: 0,                   // 0 = first switch channel (change if needed)
+  targetUrls: [
+    "http://192.168.2.211/shelly"  // endpoints to send events to
+  ],
+  mqttTopic: "shelly/switch/living/light",  // optional
+  enableMQTT: false,
+  heartbeatMinutes: 5   // ← send status every X minutes
+};
 
+function sendToAllEndpoints(payload) {
+  let jsonBody = JSON.stringify(payload);
+
+CONFIG.targetUrls.forEach(function(url) {
+  Shelly.call("HTTP.POST", {
+    url: url,
+    headers: { "Content-Type": "application/json" },
+    body: jsonBody
+  }, function(res) {
+    if (!res) {
+      print("Failed to " + url + ": no response (host unreachable?)");
+      return;
+    }
+
+    if (res.code === 200 || res.code === 204) {
+      print("Sent OK to " + url);
+    } else {
+      print("Failed to " + url + ": code=" + res.code + 
+            (res.message ? " msg=" + res.message : ""));
+    }
+  });
+});
+
+}
+
+function createPayload(state) {
+  return {
+    device: Shelly.getDeviceInfo().id,
+    type: "switch_toggle",
+    switch: CONFIG.switchId,
+    state: state ? "ON" : "OFF",
+    timestamp: Math.floor(Date.now() / 1000),
+    source: "physical"
+  };
+}
+
+function sendCurrentStatus(reason) {
+  let status = Shelly.getComponentStatus("switch:" + CONFIG.switchId);
+
+  let payload = {
+    device: Shelly.getDeviceInfo().id,
+    type: "heartbeat",
+    switch: CONFIG.switchId,
+    state: status.output ? "ON" : "OFF",
+    timestamp: Math.floor(Date.now() / 1000),
+    source: reason
+  };
+
+  print("Heartbeat → state=" + status.state +
+        " position=" + status.current_pos);
+
+  sendToAllEndpoints(payload);
+}
+
+
+
+
+
+// Main event listener for switch changes
+Shelly.addStatusHandler(function(event) {
+  if (event.component !== "switch:" + CONFIG.switchId) return;
+
+  let delta = event.delta;
+  let status = Shelly.getComponentStatus("switch:" + CONFIG.switchId);
+  let shouldSend = false;
+  let currentState = status.output;
+
+  // Send on on/off change
+  if (typeof delta.output !== "undefined") {
+    print("Switch " + CONFIG.switchId + " → " + (currentState ? "ON" : "OFF"));
+    shouldSend = true;
+  }
+
+  if (shouldSend) {
+    let payload = createPayload(currentState);   
+    sendToAllEndpoints(payload);
+  }
+});
+
+// Optional MQTT part
+if (CONFIG.enableMQTT) {
+  Shelly.addStatusHandler(function(event) {
+    if (event.component !== "switch:" + CONFIG.switchId) return;
+    let delta = event.delta;
+    let topicBase = CONFIG.mqttTopic;
+
+    if (typeof delta.output !== "undefined") {
+      Shelly.call("MQTT.Publish", {
+        topic: topicBase + "/state",
+        message: delta.output ? "ON" : "OFF",
+        retain: true
+      });
+    }
+  });
+}
+
+if (CONFIG.heartbeatMinutes > 0) {
+  Timer.set(
+    CONFIG.heartbeatMinutes * 60 * 1000,
+    true,  // repeat
+    function () {
+      sendCurrentStatus("periodic");
+    }
+  );
+
+  print("Heartbeat enabled every " +
+        CONFIG.heartbeatMinutes + " minutes");
+}
+
+print("Switch JSON sender to " + CONFIG.targetUrls.length + " endpoints started");
+print("Watching switch:" + CONFIG.switchId + " → " + CONFIG.targetUrls.join(", "));
