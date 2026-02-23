@@ -1,1 +1,212 @@
+--[[
+autor: jacek@smartdom.guru
+2025-02-10 - updated 2026 for JSON POST from Shelly Dimmer Gen3
 
+]]
+
+
+-- Grenton already parsed JSON → table (if RequestType = JSON)
+-- Change this to match your Grenton HTTP module ID... 
+local data = HTTP_1->Shelly_webhook->RequestBody
+
+-- Optional: safety check if parsing worked
+if type(data) ~= "table" then
+   print("JSON parsing failed - RequestBody is not a table!")
+    HTTP_1->Shelly_webhook->StatusCode = 400
+    HTTP_1->Shelly_webhook->ResponseBody = "Invalid JSON"
+    HTTP_1->Shelly_webhook->SendResponse()
+    return
+end
+
+
+
+--------------------------------------------------
+-- Debug: print table key/value pairs
+--------------------------------------------------
+local function logTable(tbl, prefix)
+    prefix = prefix or ""
+
+    for k, v in pairs(tbl) do
+        if type(v) == "table" then
+            print(prefix .. tostring(k) .. " = {")
+            logTable(v, prefix .. "  ")
+            print(prefix .. "}")
+        else
+            print(prefix .. tostring(k) .. " = " .. tostring(v))
+        end
+    end
+end
+
+
+
+print("Shelly JSON received:")
+logTable(data, "  ")
+
+
+
+
+
+-- Extract interesting fields
+
+
+local state = (string.upper(data.state) == "ON")  -- true if "ON" (case insensitive), false otherwise
+
+
+
+local bright = 0
+if data.brightness ~= nil and state == true then
+    bright = data.brightness / 100
+end
+
+
+local dev_id  = data.device    or "?"
+local lightId = data.light     or 0
+local switchId = data.switch   or 0
+
+----list of shellys, parsing logic 
+-- 
+-- Sa1 Salon Kanapa0 -- shellyprodm2pm-2cbcbb9eb75c - Light0 192.168.2.234
+	if dev_id == "shellyprodm2pm-2cbcbb9eb75c" and lightId == 0 then 
+		HTTP_1->Shelly_Dimmer_01_state = state
+		HTTP_1->Shelly_Dimmer_01_brightness = bright
+	end
+-- Sa2 Salon Kanapa1 -- shellyprodm2pm-2cbcbb9eb75c - Light1 192.168.2.234
+	if dev_id == "shellyprodm2pm-2cbcbb9eb75c" and lightId == 1 then
+		HTTP_1->Shelly_Dimmer_02_state = state
+		HTTP_1->Shelly_Dimmer_02_brightness = bright
+	end
+
+
+-- J1 Salon Jadalnia1 -- shellyprodm2pm-ac1518799c6c  - Light1 192.168.2.238
+	if dev_id == "shellyprodm2pm-ac1518799c6c" and lightId == 0 then
+		HTTP_1->Shelly_Dimmer_11_state = state
+		HTTP_1->Shelly_Dimmer_11_brightness = bright
+	end	
+-- J1 Salon Jadalnia2 -- shellyprodm2pm-ac1518799c6c  - Light1 192.168.2.238
+	if dev_id == "shellyprodm2pm-ac1518799c6c" and lightId == 1 then
+		HTTP_1->Shelly_Dimmer_12_state = state
+		HTTP_1->Shelly_Dimmer_12_brightness = bright
+	end		
+-- Po3 Poj.Gosci1 -- shellyprodm2pm-2cbcbba528fc - Light1 192.168.2.239
+	if dev_id == "shellyprodm2pm-2cbcbba528fc" and lightId == 0 then
+		HTTP_1->Shelly_Dimmer_21_state = state
+		HTTP_1->Shelly_Dimmer_21_brightness = bright
+	end	
+-- Po4 Pok.Gosci2 -- shellyprodm2pm-2cbcbba528fc - Light1 192.168.2.239
+	if dev_id == "shellyprodm2pm-2cbcbba528fc" and lightId == 1 then
+		HTTP_1->Shelly_Dimmer_22_state = state
+		HTTP_1->Shelly_Dimmer_22_brightness = bright
+	end		
+		
+-- S2 Sypialnia łóżko -- DCDA0CE67780 - Switch0 192.168.2.232
+	if dev_id == "shelly1minig3-dcda0ce67780" then		
+		HTTP_1->Shelly_Switch_11_state = state
+	end
+-- S3 Sypialnia łóżko -- E4B3232AA444 - Switch0 192.168.2.233
+	if dev_id == "shelly1minig3-e4b3232aa444" then
+		HTTP_1->Shelly_Switch_21_state = state
+	end
+-- Schody- Switch0 192.168.2.234
+	if dev_id == "shelly1minig3-34b7dac72c60" then
+		HTTP_1->Shelly_Switch_31_state = state
+	end	
+-- Schody- Switch0 192.168.2.235
+	if dev_id == "shelly1minig3-cc8da25de104" then
+		HTTP_1->Shelly_Switch_41_state = state
+	end	
+
+-- Lazienka u gory - Switch0 192.168.2.237
+	if dev_id == "shellyplus2pm-2cbcbb3d1518" then
+		HTTP_1->Shelly_Switch_51_state = state
+	end	
+
+-- Lazienka u gory - Switch1 192.168.2.237
+	if dev_id == "shellyplus2pm-2cbcbb3d1518" then
+		HTTP_1->Shelly_Switch_52_state = state
+	end	
+
+	
+	
+
+			
+-------------------
+
+--------------------------------------------------
+-- SHUTTERS (Shelly Cover)
+--------------------------------------------------
+
+---- data needed: 
+---- State : 0 stoi, 1 ruch w gore, 2 ruch w dol, 3 zablokowana, 4 kalibracja
+---- Up - stan przekaznika UP 0 wylaczony, 1 wlaczony
+---- Down - stan przekaznika DOWN 0 wylaczony, 1 wlaczony
+---- Position - procentowane otwarcie
+---- Lamel position - pozycja lameli / nie dotyczy 
+---- Ustaw poziom otwarcia - % 
+---- Ustaw pozycje lamelek
+---- moveUP / move down - open / close
+---- start - ruch wgore jesli poprzedni byl w dol, naprzemiennie nie wiem po co to uzywac ale w widgece wymagane
+
+
+
+
+local coverId = data.cover
+local position = data.position or 0
+local coverState = data.state or ""
+
+-- normalize state to lowercase
+coverState = string.lower(coverState)
+
+-- convert position 0-100 → 0.0-1.0 for Grenton
+local pos = position / 100
+
+--------------------------------------------------
+-- Shutter 1 – Salon Roleta
+-- example device: shellyshutter-d0cf13dfab74
+--------------------------------------------------
+if dev_id == "shellyshutter-d0cf13dfab74" and coverId == 0 then
+
+    HTTP_1->Shelly_Shutter_01_position = pos
+
+    if coverState == "opening" then
+        HTTP_1->Shelly_Shutter_01_moving = true
+        HTTP_1->Shelly_Shutter_01_direction = 1
+    elseif coverState == "closing" then
+        HTTP_1->Shelly_Shutter_01_moving = true
+        HTTP_1->Shelly_Shutter_01_direction = -1
+    else
+        HTTP_1->Shelly_Shutter_01_moving = false
+    end
+
+end
+
+
+--------------------------------------------------
+-- Shutter 2 – Sypialnia Roleta
+-- example device: shellyplus2pm-2cbcbb39cf54
+--------------------------------------------------
+if dev_id == "shellyplus2pm-2cbcbb39cf54" and coverId == 0 then
+
+    HTTP_1->Shelly_Shutter_02_position = pos
+
+    if coverState == "opening" then
+        HTTP_1->Shelly_Shutter_02_moving = true
+        HTTP_1->Shelly_Shutter_02_direction = 1
+    elseif coverState == "closing" then
+        HTTP_1->Shelly_Shutter_02_moving = true
+        HTTP_1->Shelly_Shutter_02_direction = -1
+    else
+        HTTP_1->Shelly_Shutter_02_moving = false
+    end
+
+end
+
+
+
+
+
+
+
+-- Always respond OK (Shelly expects 200)
+HTTP_1->Shelly_webhook->StatusCode = 200
+HTTP_1->Shelly_webhook->ResponseBody = "OK"     
+HTTP_1->Shelly_webhook->SendResponse()
