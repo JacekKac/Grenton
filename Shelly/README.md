@@ -11,5 +11,6 @@ Requirements
   Shelly device type: Switch 
 
 4. Shelly device preparation. Go to http://192.168.0.120 -> Scripts -> Create a script -> Choose a name like "grenton webhook" past the script, save, turn on restart.
-
+5. In case it's a dobule switch add another script, changing the SwitchId field from 0 to 1.
+6. 
    
